@@ -309,5 +309,7 @@ def get_dataloader_by_config(tokenizer, config, global_config=None, max_length=1
         return get_llada_bs17k_dataloader(tokenizer, config, max_length)
     elif training_mode == 'dream':
         return get_bs17k_dataloader(tokenizer, config, max_length)
+    elif training_mode == 'sdtt':
+        return get_llada_bs17k_dataloader(tokenizer, config, max_length)
     else:
         raise ValueError(f"Unsupported training mode: {training_mode}")

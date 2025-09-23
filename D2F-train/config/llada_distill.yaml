@@ -1,10 +1,10 @@
 # Training mode configuration
-training_mode: 'llada'  # 'llada' or 'dream'
+training_mode: 'sdtt'  # 'llada' or 'dream'
 
 # Model and data path configuration
 paths:
   model: 'GSAI-ML/LLaDA-8B-Instruct'
-  experiment: 'ckpt_llada_instruct'
+  experiment: '/sensei-fs-3/users/hyou/wei/Discrete-Diffusion-Forcing/D2F-train'
   data:
     bs: 'Lansechen/bs17k_collection_filtered_hard_maxlength600'
     bs_easy: 'Lansechen/bs17k_collection_filtered_easy_maxlength600'
@@ -31,11 +31,11 @@ denoiser:
 # Make sure this config is the same as the eval config
 inference:
   temperature: 0
-  top_p: None
-  top_k: None
+  top_p:
+  top_k:
   sampling_strategy: 'default'
   num_distill_steps: 2
-  skip_threshold: 0.9
+  skip_threshold: 0.97
 
 train:
   # Will use paths.experiment path
@@ -43,12 +43,12 @@ train:
   head_resume_path:
   skipped_keys:
   global_step:
-  exp_name: &exp_name 'llada_ddt_maskteacher'
+  exp_name: &exp_name 'llada_sdtt_distill_full_finetune'
   wandb_proj: *exp_name
-  output_dir: 'ddt_test'
+  output_dir: 'sdtt_distill'
   logging_dir: 'logs'
   mixed_precision: 'fp16'
-  gradient_accumulation_steps: 5
+  gradient_accumulation_steps: 8
   report_to: 'wandb'
   block_size: 16
   

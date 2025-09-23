@@ -601,6 +601,7 @@ class DreamLoRA(TemplateLM):
         block_size = self.block_size
         block_add_threshold = self.block_add_threshold
         skip_threshold = self.skip_threshold
+        num_diffusion_steps_per_block = [0] * (self.max_length // block_size)
         
         # Pre-generate the full attention mask, using the model's data type
         prompt_length = prompt.shape[1]
@@ -770,7 +771,8 @@ class DreamLoRA(TemplateLM):
                         blocks_to_deactivate.append(block_id)
                         continue
                     
-                    
+                    num_diffusion_steps_per_block[block_id] += 1
+
                     # Calculate relative position of logits
                     logit_offset = block_start - process_start_pos
                     block_rel_positions = torch.where(block_mask_index[0, block_start:block_end])[0]
@@ -867,9 +869,14 @@ class DreamLoRA(TemplateLM):
         
         # Generate final answer
         generated_sequence = x_t[0, prompt.shape[1]:].tolist()
-        
-        return generated_sequence
 
+        # Get the avg number of diffusion steps per block
+        # 1. Filter out blocks that have no diffusion steps
+        # 2. Get the avg number of diffusion steps per block
+        num_diffusion_steps_per_block = [steps for steps in num_diffusion_steps_per_block if steps > 0]
+        avg_num_diffusion_steps_per_block = sum(num_diffusion_steps_per_block) / len(num_diffusion_steps_per_block)
+        
+        return generated_sequence, avg_num_diffusion_steps_per_block
 
 
     def generate_until(self, requests: List[Instance], disable_tqdm: bool = False):
@@ -879,6 +886,7 @@ class DreamLoRA(TemplateLM):
         # Statistics variables
         num_tokens = 0
         num_nfe = 0
+        total_avg_num_diffusion_steps_per_block = 0
         
         bar = tqdm(total=len(requests), disable=(disable_tqdm or (self.rank != 0)), desc="Running generate_until requests")
         
@@ -910,7 +918,8 @@ class DreamLoRA(TemplateLM):
                 input_ids = input_ids[:, -(self.max_length-self.max_new_tokens):]
             
             # Generate token IDs
-            generated_answer = self._generate_block_single(input_ids)
+            generated_answer, avg_num_diffusion_steps_per_block = self._generate_block_single(input_ids)
+            total_avg_num_diffusion_steps_per_block += avg_num_diffusion_steps_per_block
             
             # Use tokenizer.batch_decode for decoding, consistent with LLaDA.py
             cont_toks_list = self.tokenizer.batch_decode([generated_answer], skip_special_tokens=True)
@@ -946,9 +955,11 @@ class DreamLoRA(TemplateLM):
                 "total_time": total_time,
                 "tokens_per_second": float(num_tokens) / total_time if total_time > 0 else 0.0,
                 "nfe_per_token": float(num_nfe) / float(num_tokens) if num_tokens > 0 else 0.0,
-                "timestamp": final_time
+                "timestamp": final_time,
+                "avg_num_diffusion_steps_per_block": total_avg_num_diffusion_steps_per_block / len(requests),
+                "block_size": self.block_size
             }
-            final_stats_path = os.path.join(self.save_dir, f'rank_{self.rank}_final_stats.json')
+            final_stats_path = os.path.join(self.save_dir, f'rank_{self.rank}_skip_{self.skip_threshold}_final_stats.json')
             with open(final_stats_path, 'w', encoding='utf-8') as f:
                 json.dump(final_stats, f, ensure_ascii=False, indent=2)
         

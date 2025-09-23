@@ -15,7 +15,8 @@ def compute_loss_by_config(
         feature_align,
         self_step,
         eos_id,
-        config
+        config,
+        teacher_denoiser=None,
 ):
     """Select different loss functions based on config file"""
     training_mode = config.get('training_mode', 'dream')
@@ -32,7 +33,7 @@ def compute_loss_by_config(
         )
     elif training_mode == 'sdtt':
         return compute_sdtt_loss(
-            input_ids, denoiser, question_length, mask_id, block_size,
+            input_ids, teacher_denoiser, denoiser, question_length, mask_id, block_size,
             enable_shift, share_steps, self_align, feature_align, self_step, eos_id,
             config.inference
         )
@@ -194,6 +195,7 @@ def build_custom_float_attention_mask(input_ids, prompt_length, block_size, devi
 
 def compute_sdtt_loss(
         input_ids,
+        teacher_denoiser,
         denoiser,
         question_length,
         mask_id,
@@ -229,9 +231,11 @@ def compute_sdtt_loss(
 
     # Step 4: Get multi-step teacher logits
     with torch.no_grad():
-        with denoiser.disable_adapter():
-            teacher_logits = multi_step_forward(denoiser, noisy_batch, attention_mask=torch.zeros([1,1,noisy_batch.shape[1],noisy_batch.shape[1]],dtype=torch.float16,device=denoiser.device), inference_config=inference_config)
-            teacher_logits = torch.nn.functional.softmax(teacher_logits, dim=-1)
+        # with denoiser.disable_adapter():
+        #     teacher_logits = multi_step_forward(denoiser, noisy_batch, attention_mask=torch.zeros([1,1,noisy_batch.shape[1],noisy_batch.shape[1]],dtype=torch.float16,device=denoiser.device), inference_config=inference_config)
+        #     teacher_logits = torch.nn.functional.softmax(teacher_logits, dim=-1)
+        teacher_logits = multi_step_forward(teacher_denoiser, noisy_batch.clone(), attention_mask=torch.zeros([1,1,noisy_batch.shape[1],noisy_batch.shape[1]],dtype=torch.float16,device=denoiser.device), inference_config=inference_config)
+        teacher_logits = torch.nn.functional.softmax(teacher_logits, dim=-1)
     token_loss_2 = F.cross_entropy(logits[masked_indices], teacher_logits[masked_indices], reduction='none') / p_mask[masked_indices]
     # print("token_loss_2",token_loss_2.shape)
 
@@ -249,7 +253,11 @@ def multi_step_forward(denoiser, noisy_batch, attention_mask, inference_config):
 
     for iter in range(inference_config.num_distill_steps):
         masked_indices = (noisy_batch == mask_id)
-        masked_rel_positions = torch.where(masked_indices)[0]
+        # print("Masked tokens: ", torch.sum(masked_indices))
+        masked_rel_positions = torch.where(masked_indices)[1]
+        if torch.sum(masked_indices) == 0:
+            # No more masked tokens left
+            break
 
         ref_logits=denoiser(noisy_batch,attention_bias=attention_mask).logits
         if iter == 0:
@@ -264,7 +272,7 @@ def multi_step_forward(denoiser, noisy_batch, attention_mask, inference_config):
 
         # Step 2: Calculate the confidence of the masked tokens
         confidence, x0, initial_confidence = sample_tokens(
-            masked_logits.squeeze(0), 
+            masked_logits, 
             inference_config.temperature, 
             top_p=inference_config.top_p, 
             top_k=inference_config.top_k, 
@@ -282,12 +290,17 @@ def multi_step_forward(denoiser, noisy_batch, attention_mask, inference_config):
         # Step 3: Unmask the most confident tokens
         x0_ = torch.zeros_like(x0, device=noisy_batch.device, dtype=torch.long) + mask_id
         x0_[all_indices] = x0[all_indices].clone()
+        # assert x0_.shape[0] > torch.sum(x0_ == mask_id), print(x0_)
+        # print("x0_: ", x0_.shape)
+        # print("x0_[all_indices]: ", x0_[all_indices].shape)
             
         # Map indices back to original positions
         for _, idx in enumerate(all_indices):
             abs_pos = masked_rel_positions[idx]
             noisy_batch[0, abs_pos] = x0_[idx]
             teacher_logits[0, abs_pos] = ref_logits[0, abs_pos].clone()
+
+        # assert torch.sum(masked_indices) > torch.sum(noisy_batch == mask_id)
 
     return teacher_logits
 
@@ -315,7 +328,7 @@ def top_k_logits(logits, top_k=None):
 def sample_tokens(logits, temperature=0.0, top_p=None, top_k=None, margin_confidence=False, neg_entropy=False):
     if temperature > 0:
         logits = logits / temperature
-    if top_p is not None and top_p < 1:
+    if top_p is not None:
         logits = top_p_logits(logits, top_p)
     if top_k is not None:
         logits = top_k_logits(logits, top_k)

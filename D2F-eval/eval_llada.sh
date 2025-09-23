@@ -1,15 +1,15 @@
 #!/bin/bash
 
 
-tasks="gsm8k mbpp minerva_math"
+tasks="gsm8k mbpp dummy"
 nshots="4 3 0"
 lengths="512 512 512"
 temperatures="0 0 0"
 limits="10000 10000 10000"
 block_sizes="64 32 32"
-block_add_thresholds="0.7 0.9 0.1"
-decoded_token_thresholds="0.95 0.95 0.95"
-skip_thresholds="0.9 0.9 0.9"
+block_add_thresholds="1.0 1.0 0.1"
+decoded_token_thresholds="1.0 1.0 0.95"
+skip_thresholds="0.4 0.4 0.9"
 top_ps="none none none"
 dtypes="bfloat16 bfloat16 bfloat16"
 sampling_strategies="default default default"
@@ -21,9 +21,9 @@ humaneval_temperatures="0"
 humaneval_limits="10000"
 humaneval_diffusion_steps="512"
 humaneval_block_sizes="32"
-humaneval_block_add_thresholds="0.1"
-humaneval_decoded_token_thresholds="0.95"
-humaneval_skip_thresholds="0.9"
+humaneval_block_add_thresholds="1.0"
+humaneval_decoded_token_thresholds="1.0"
+humaneval_skip_thresholds="0.4"
 humaneval_top_ps="none"
 humaneval_dtypes="bfloat16"
 humaneval_sampling_strategies="default"
@@ -31,8 +31,11 @@ humaneval_sampling_strategies="default"
 
 base_model=GSAI-ML/LLaDA-8B-Instruct
 
+# lora_models=(
+#     "/mnt/localssd/d2f/ckpt_llada_instruct/llada_ddt_maskteacher/ddt_test/Decoder-llada_ddt_maskteacher-16k"
+# )
 lora_models=(
-    "SJTU-Deng-Lab/D2F_LLaDA_Instruct_8B_Lora"
+    "/sensei-fs-3/users/hyou/wei/Discrete-Diffusion-Forcing/D2F-train/llada_sdtt_distill/sdtt_distill/Decoder-llada_sdtt_distill-32k"
 )
 
 read -ra TASKS_ARRAY <<< "$tasks"
@@ -115,7 +118,7 @@ for lora_model in "${lora_models[@]}"; do
             humaneval_model_args="pretrained=${base_model},lora_path=${lora_model},max_new_tokens=${HUMANEVAL_LENGTHS_ARRAY[$i]},diffusion_steps=${HUMANEVAL_DIFFUSION_STEPS_ARRAY[$i]},temperature=${HUMANEVAL_TEMP_ARRAY[$i]},top_p=${HUMANEVAL_TOP_PS_ARRAY[$i]},add_bos_token=true,escape_until=true,block_size=${HUMANEVAL_BLOCK_SIZES_ARRAY[$i]},block_add_threshold=${HUMANEVAL_BLOCK_ADD_THRESHOLDS_ARRAY[$i]},skip_threshold=${HUMANEVAL_SKIP_THRESHOLDS_ARRAY[$i]},decoded_token_threshold=${HUMANEVAL_DECODED_TOKEN_THRESHOLDS_ARRAY[$i]},dtype=${HUMANEVAL_DTYPES_ARRAY[$i]},sampling_strategy=${HUMANEVAL_SAMPLING_STRATEGIES_ARRAY[$i]},save_dir=${output_path}"
         fi
         
-        CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch --main_process_port 29520 --num_processes 8 eval_llada.py --model dream_lora \
+        CUDA_VISIBLE_DEVICES=4,5,6,7 accelerate launch --main_process_port 29520 --num_processes 4 eval_llada.py --model dream_lora \
             --model_args $humaneval_model_args \
             --tasks humaneval \
             --num_fewshot ${HUMANEVAL_NSHOTS_ARRAY[$i]} \
@@ -138,7 +141,7 @@ for lora_model in "${lora_models[@]}"; do
             model_args="pretrained=${base_model},lora_path=${lora_model},max_new_tokens=${LENGTH_ARRAY[$i]},diffusion_steps=${LENGTH_ARRAY[$i]},add_bos_token=true,temperature=${TEMP_ARRAY[$i]},top_p=${TOP_PS_ARRAY[$i]},block_size=${BLOCK_SIZES_ARRAY[$i]},block_add_threshold=${BLOCK_ADD_THRESHOLDS_ARRAY[$i]},skip_threshold=${SKIP_THRESHOLDS_ARRAY[$i]},decoded_token_threshold=${DECODED_TOKEN_THRESHOLDS_ARRAY[$i]},dtype=${DTYPES_ARRAY[$i]},sampling_strategy=${SAMPLING_STRATEGIES_ARRAY[$i]},save_dir=${output_path}"
         fi
         
-        CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch --main_process_port 29520 --num_processes 8 eval_llada.py --model dream_lora \
+        CUDA_VISIBLE_DEVICES=4,5,6,7 accelerate launch --main_process_port 29520 --num_processes 4 eval_llada.py --model dream_lora \
             --model_args $model_args \
             --tasks ${TASKS_ARRAY[$i]} \
             --limit ${LIMITS_ARRAY[$i]} \

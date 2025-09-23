@@ -43,18 +43,23 @@ def get_accelerator(config, global_config):
 def main(args):
     config = OmegaConf.load(args.config)
     accelerator, output_dir = get_accelerator(config.train, config)
+
+    teacher_denoiser = None
     
     # Use unified model and data loading functions
-    denoiser, tokenizer = get_model_by_config(config)
+    if config.training_mode == 'sdtt':
+        teacher_denoiser, denoiser, tokenizer = get_model_by_config(config)
+    else:
+        denoiser, tokenizer = get_model_by_config(config)
     dataloader = get_dataloader_by_config(tokenizer, config.data, config)
     
-    if config.train.decoder_resume_path is not None:
-        ckpt = torch.load(config.train.decoder_resume_path, map_location='cpu', weights_only=True)
-        if config.train.skipped_keys:
-            ckpt = {k: v for k, v in ckpt.items() if k not in config.train.skipped_keys}
-        m, u = denoiser.load_state_dict(ckpt, strict=False)
-        if accelerator.is_main_process:
-            print(f'model ckpt loaded from {config.train.decoder_resume_path}')
+    # if config.train.decoder_resume_path is not None:
+    #     ckpt = torch.load(config.train.decoder_resume_path, map_location='cpu', weights_only=True)
+    #     if config.train.skipped_keys:
+    #         ckpt = {k: v for k, v in ckpt.items() if k not in config.train.skipped_keys}
+    #     m, u = denoiser.load_state_dict(ckpt, strict=False)
+    #     if accelerator.is_main_process:
+    #         print(f'model ckpt loaded from {config.train.decoder_resume_path}')
 
         # ckpt = torch.load(config.train.head_resume_path, map_location='cpu', weights_only=True)
         # if config.train.skipped_keys:
@@ -74,6 +79,8 @@ def main(args):
     )
     
     denoiser, dataloader, optimizer = accelerator.prepare(denoiser, dataloader, optimizer)
+    if teacher_denoiser is not None:
+        teacher_denoiser = teacher_denoiser.to(accelerator.device)
 
     config.device_count = accelerator.num_processes
     if accelerator.is_main_process:
@@ -114,7 +121,8 @@ def main(args):
                     feature_align = config.train.feature_align,
                     self_step     = config.train.self_step,
                     eos_id        = tokenizer.eos_token_id,
-                    config        = config
+                    config        = config,
+                    teacher_denoiser = teacher_denoiser
                 )
                 
                 if config.train.share_steps > 1:
